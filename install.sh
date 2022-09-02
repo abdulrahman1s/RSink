@@ -24,9 +24,17 @@ arcive_url="https://github.com/abdulrahman1s/RSink/releases/latest/download/rsin
 install_path="$HOME/.local/bin"
 exe="$install_path/rsink"
 
+# For termux users
+mkdir -p "$install_path"
 curl --fail --location --progress-bar --output "$exe.tar.gz" "$arcive_url"
 tar -xzvf "$exe.tar.gz" -C "$install_path"
 rm "$exe.tar.gz"
+
+if command -v termux-setup-storage; then
+    mkdir -p ~/.termux/boot
+    echo "#!/data/data/com.termux/files/usr/bin/sh 
+    $exe" > ~/.termux/boot/rsink.sh
+fi
 
 if command -v systemctl >/dev/null; then
     mkdir -p ~/.config/systemd/user/
