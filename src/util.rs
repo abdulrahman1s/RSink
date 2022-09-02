@@ -69,3 +69,28 @@ where
         sp.stop_with_message(stop_message.into());
     }
 }
+
+pub fn settings_file() -> Result<PathBuf> {
+    let mut path = dirs::config_dir().unwrap();
+
+    path.push("rsink");
+
+    fs::create_dir_all(&path)?;
+
+    path.push("config.toml");
+
+    let file = fs::File::options()
+        .write(true)
+        .read(true)
+        .create(true)
+        .open(&path)?;
+
+    if file.metadata()?.len() == 0 {
+        return Err(anyhow::anyhow!(
+            "Please configure the settings file at {}",
+            path.to_string_lossy()
+        ));
+    }
+
+    Ok(path)
+}

@@ -20,7 +20,7 @@ use util::*;
 
 lazy_static! {
     pub static ref SETTINGS: Config = Config::builder()
-        .add_source(config::File::with_name("config"))
+        .add_source(config::File::from(settings_file().unwrap()))
         .build()
         .expect("Cannot init settings");
     pub static ref SYNC_DIR: PathBuf = SETTINGS

@@ -22,11 +22,11 @@ Simple utility to backup/sync data between devices to the cloud
 - [ ] Mega
 
 ### Install
-1. [Download](https://github.com/abdulrahman1s/RSink/releases/latest) the executable file from releases.
-2. Extract the zipped file
-3. Create a file named [`config.toml`](config.example.toml) and fill the missing values
-4. Type `./rsink` to run the program
 
+#### Shell (Linux/Mac/Termux)
+```sh
+$ curl -fsSL https://raw.githubusercontent.com/abdulrahman1s/RSink/master/install.sh | sh
+```
 
 ### Run on Android
 ...
@@ -38,7 +38,7 @@ Simple utility to backup/sync data between devices to the cloud
 
 
 ### TODO
-- [ ] Install script
+- [X] Install script
 - [ ] Multiple providers the same time
 - [ ] Test the windows version
 - [ ] Support other cloud providers

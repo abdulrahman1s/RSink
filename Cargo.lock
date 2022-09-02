@@ -668,6 +668,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "config",
+ "dirs",
  "lazy_static",
  "notify",
  "rust-s3",
