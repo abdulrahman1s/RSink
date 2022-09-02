@@ -27,7 +27,7 @@ lazy_static! {
         .get_string("main.path")
         .expect("Missing main.path env")
         .parse()
-        .unwrap();
+        .expect("Invalid path string");
 }
 
 fn main() -> Result<()> {
@@ -57,10 +57,20 @@ fn main() -> Result<()> {
 
         let mut changes = HashSet::<PathBuf>::new();
 
-        while let Ok(Ok(event)) = rx.recv() {
+        while let Ok(event) = rx.recv() {
+            let event = match event {
+                Ok(e) => e,
+                Err(err) => {
+                    println!("Notify Error: {:?}", err);
+                    continue;
+                }
+            };
+
             if *syncing.lock().unwrap() {
                 continue;
             }
+
+            println!("{:?}", event);
 
             match event.kind {
                 EventKind::Create(CreateKind::File) => {
