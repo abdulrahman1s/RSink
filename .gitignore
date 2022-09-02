@@ -1,3 +1,4 @@
 /target
 sync
 config.*
+!config.example.toml

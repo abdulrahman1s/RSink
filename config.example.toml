@@ -1,0 +1,9 @@
+[main]
+interval = 60000
+path = "/home/abdulrahman/Sync"
+
+[s3]
+bucket_name = "sync"
+key = "access key"
+secret = "secret"
+endpoint = "https://example.com/endpoint"
