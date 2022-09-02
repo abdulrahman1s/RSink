@@ -46,4 +46,4 @@ Simple utility to backup/sync data between devices to the cloud
 - [ ] More options
 
 #### License
-Refer the [LICENCE] file.
+Refer the [LICENCE](LICENCE) file.
