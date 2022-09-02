@@ -23,7 +23,11 @@ lazy_static! {
         .add_source(config::File::with_name("config"))
         .build()
         .expect("Cannot init settings");
-    pub static ref SYNC_DIR: PathBuf = SETTINGS.get_string("main.path").expect("Missing main.path env").parse().unwrap();
+    pub static ref SYNC_DIR: PathBuf = SETTINGS
+        .get_string("main.path")
+        .expect("Missing main.path env")
+        .parse()
+        .unwrap();
 }
 
 fn main() -> Result<()> {
