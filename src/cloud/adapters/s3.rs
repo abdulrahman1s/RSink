@@ -73,7 +73,7 @@ impl CloudAdapter for Cloud {
     }
 
     fn exists(&self, path: &Path) -> Result<bool> {
-        let (_, code): (_, u16) = self.bucket.head_object(normalize_path(&path))?;
+        let (_, code): (_, u16) = self.bucket.head_object(normalize_path(path))?;
         Ok(code == 200)
     }
 
