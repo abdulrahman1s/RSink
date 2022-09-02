@@ -5,22 +5,58 @@ if ! command -v tar >/dev/null; then
     exit 1
 fi
 
-if [ "$OS" = "Windows_NT" ]; then
-    target="x86_64-pc-windows-msvc"
-else
-    case $(uname -sm) in
-    "Darwin x86_64") target="x86_64-apple-darwin" ;;
-    "Darwin arm64") target="aarch64-apple-darwin" ;;
-    "Android i686" | "Android x86" | "Android i786" | "Android i486" | "Android i386") target="i686-linux-android" ;;
-    "Android armv7l" | "Android armv8l" | "Android arm") target="armv7-linux-androideabi" ;;
-    "Linux aarch64" | "Linux arm64") target="aarch64-unknown-linux-gnu" ;;
-    *) target="x86_64-unknown-linux-gnu" ;;
-    esac
+case $(uname -s) in
+"Android") os="linux-android" ;;
+"Linux") os="unknown-linux-gnu" ;;
+"Darwin") os="apple-darwin" ;;
+esac
+
+if command -v termux-setup-storage; then
+    os="linux-android"
 fi
 
-echo "Target: $target"
+case $(uname -m) in
+i386 | i486 | i686 | i786 | x86)
+    arch=i686
+    ;;
+xscale | arm)
+    arch=arm
+    if [ "$os" = "linux-android" ]; then
+        os=linux-androideabi
+    fi
+    ;;
+armv6l)
+    arch=arm
+    if [ "$os" = "linux-android" ]; then
+        os=linux-androideabi
+    else
+        os="${os}eabihf"
+    fi
+    ;;
+armv7l | armv8l)
+    arch=armv7
+    if [ "$os" = "linux-android" ]; then
+        os=linux-androideabi
+    else
+        os="${os}eabihf"
+    fi
+    ;;
+aarch64 | arm64)
+    arch=aarch64
+    ;;
+x86_64 | x86-64 | x64 | amd64)
+    arch=x86_64
+    ;;
+*)
+    echo "unknown CPU type: $arch"
+    exit 1
+    ;;
+esac
 
-arcive_url="https://github.com/abdulrahman1s/RSink/releases/latest/download/rsink-${target}.tar.gz"
+
+echo "Target: $arch-$os"
+
+arcive_url="https://github.com/abdulrahman1s/RSink/releases/latest/download/rsink-$arch-$os.tar.gz"
 install_path="$HOME/.local/bin"
 exe="$install_path/rsink"
 
