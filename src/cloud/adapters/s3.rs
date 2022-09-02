@@ -45,11 +45,15 @@ impl CloudAdapter for Cloud {
         for list in self.bucket.list("/".to_owned(), None)? as Vec<ListBucketResult> {
             for obj in list.contents {
                 let path = key_to_path(&obj.key);
+
+                fs::create_dir_all(path.parent().unwrap())?;
+
                 let mut file = fs::File::options()
                     .read(true)
                     .write(true)
                     .create(true)
                     .open(&path)?;
+
                 let metadata = file.metadata()?;
 
                 if metadata.len() != obj.size
