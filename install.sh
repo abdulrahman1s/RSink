@@ -28,20 +28,23 @@ curl --fail --location --progress-bar --output "$exe.tar.gz" "$arcive_url"
 tar -xzvf "$exe.tar.gz" -C "$install_path"
 rm "$exe.tar.gz"
 
-if command -v tar >/dev/null; then
-    sudo sh -c "echo '[Unit]
+if command -v systemctl >/dev/null; then
+    mkdir -p ~/.config/systemd/user/
+    systemctl --user disable rsink
+    echo "[Unit]
 Description=Rsink syncls
+After=network.target
 
 [Service]
 Type=simple
 ExecStart=$exe
+Restart=always
 
 [Install]
-WantedBy=multi-user.target' >> /etc/systemd/system/rsink.service"
-
-    sudo systemctl enable rsink
-    sudo systemctl start rsink
-    systemctl status rsink
+WantedBy=multi-user.target" >~/.config/systemd/user/rsink.service
+    systemctl --user enable rsink
+    systemctl --user start rsink
+    systemctl --user status rsink
 fi
 
 echo "Rsink was installed successfully to $exe"
