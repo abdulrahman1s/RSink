@@ -3,13 +3,7 @@ use crate::util::*;
 use crate::{SETTINGS, SYNC_DIR};
 use s3::serde_types::ListBucketResult;
 use s3::{creds::Credentials, Bucket, Region};
-use std::fs;
-use std::io::Write;
-use std::path::PathBuf;
-
-pub struct Cloud {
-    bucket: Bucket,
-}
+use std::{fs, io::Write, path::PathBuf};
 
 fn init_bucket() -> Result<Bucket> {
     let s3_secret = SETTINGS.get_string("s3.secret")?;
@@ -30,6 +24,10 @@ fn key_to_path(key: &str) -> PathBuf {
     let mut path = SYNC_DIR.clone();
     path.push(key);
     path
+}
+
+pub struct Cloud {
+    bucket: Bucket,
 }
 
 impl CloudAdapter for Cloud {
@@ -68,7 +66,7 @@ impl CloudAdapter for Cloud {
         for entry in walk_dir(SYNC_DIR.to_path_buf())? {
             let path = entry.path();
             if !self.exists(&path)? {
-                self.save(&path).unwrap();
+                self.save(&path)?;
                 synced += 1;
             }
         }
@@ -93,7 +91,7 @@ impl CloudAdapter for Cloud {
 
     fn save(&self, path: &Path) -> Result<()> {
         self.bucket
-            .put_object(normalize_path(path), &Cloud::read_file(path)?)?;
+            .put_object(normalize_path(path), &Self::read_file(path)?)?;
         Ok(())
     }
 

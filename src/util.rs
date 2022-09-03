@@ -61,16 +61,17 @@ where
 {
     let mut sp = Spinner::new(Spinners::Dots9, message.into());
 
-    operation().unwrap();
-
-    if stop_message.is_empty() {
+    if let Err(err) = operation() {
+        sp.stop();
+        println!("An error has occurred: {err:?}");
+    } else if stop_message.is_empty() {
         sp.stop();
     } else {
         sp.stop_with_message(stop_message.into());
     }
 }
 
-pub fn settings_file() -> Result<PathBuf> {
+pub fn settings_file_path() -> Result<PathBuf> {
     let mut path = dirs::config_dir().unwrap();
 
     path.push("rsink");

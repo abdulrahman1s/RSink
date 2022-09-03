@@ -21,12 +21,14 @@ use util::*;
 
 lazy_static! {
     pub static ref SETTINGS: Config = Config::builder()
-        .add_source(config::File::from(settings_file().unwrap()))
+        .add_source(config::File::from(
+            settings_file_path().expect("Couldn't retrieve settings file path")
+        ))
         .build()
-        .expect("Cannot init settings");
+        .unwrap();
     pub static ref SYNC_DIR: PathBuf = SETTINGS
         .get_string("main.path")
-        .expect("Missing main.path env")
+        .expect("Missing syncing path. Please fill main.path in the settings file")
         .parse()
         .expect("Invalid path string");
     pub static ref IS_INTERNET_AVAILABLE: Mutex<bool> = Mutex::new(false);
