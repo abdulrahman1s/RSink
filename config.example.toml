@@ -1,5 +1,6 @@
 [main]
-interval = 60000
+provider = "s3"
+interval = 600000
 path = "/home/abdulrahman/Sync"
 
 [s3]

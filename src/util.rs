@@ -1,4 +1,4 @@
-use crate::SYNC_DIR;
+use crate::{IS_INTERNET_AVAILABLE, SYNC_DIR};
 pub use anyhow::Result;
 use spinners::{Spinner, Spinners};
 use std::{
@@ -93,4 +93,8 @@ pub fn settings_file() -> Result<PathBuf> {
     }
 
     Ok(path)
+}
+
+pub fn check_connectivity() {
+    *IS_INTERNET_AVAILABLE.lock().unwrap() = online::sync::check(None).is_ok();
 }

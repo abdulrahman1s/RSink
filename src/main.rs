@@ -7,10 +7,11 @@ mod util;
 
 use cloud::{adapters::*, CloudAdapter};
 use config::Config;
-use notify::{event::*, EventKind, RecursiveMode, Watcher};
+use notify::{event::*, recommended_watcher, RecursiveMode, Watcher};
 use std::{
     collections::HashSet,
     path::PathBuf,
+    process::exit,
     sync::{mpsc::channel, Arc, Mutex},
     thread,
     time::Duration,
@@ -28,34 +29,59 @@ lazy_static! {
         .expect("Missing main.path env")
         .parse()
         .expect("Invalid path string");
+    pub static ref IS_INTERNET_AVAILABLE: Mutex<bool> = Mutex::new(false);
+    pub static ref SYNCING: Mutex<bool> = Mutex::new(false);
 }
 
 fn main() -> Result<()> {
-    let cloud_ref = Arc::new(s3::Cloud::new());
-    let syncing_ref = Arc::new(Mutex::new(false));
+    let cloud_ref = Arc::new(
+        match SETTINGS
+            .get_string("main.provider")
+            .expect("Missing cloud provider in config/settings")
+            .replace('_', "")
+            .replace('-', "")
+            .as_str()
+        {
+            "s3" => s3::Cloud::new(),
+            // TODO: Support more cloud
+            // "googledrive" | "gdrive" => googledrive::Cloud::new(),
+            // "dropbox" => dropbox::Cloud::new(),
+            // "mega" => mega::Cloud::new(),
+            // "onedrive" => onedrive::Cloud::new(),
+            // "protondrive" => protondrive::Cloud::new(),
+            x => {
+                println!("Unspported cloud provider: {}", x);
+                exit(1);
+            }
+        },
+    );
+
     let interval: u64 = SETTINGS
         .get("main.interval")
         .expect("Missing/Invalid interval value");
 
     let cloud = cloud_ref.clone();
-    let syncing = syncing_ref.clone();
 
     let online_task = thread::spawn(move || loop {
-        *syncing.lock().unwrap() = true;
-        spinner("Syncing...", "Synced!", || cloud.sync().map(|_| {}));
-        *syncing.lock().unwrap() = false;
-        thread::sleep(Duration::from_millis(interval));
+        check_connectivity();
+
+        if *IS_INTERNET_AVAILABLE.lock().unwrap() {
+            *SYNCING.lock().unwrap() = true;
+            spinner("Syncing...", "Synced!", || cloud.sync().map(|_| {}));
+            *SYNCING.lock().unwrap() = false;
+            thread::sleep(Duration::from_millis(interval));
+        } else {
+            println!("Skip syncing.. there are no internet connection");
+        }
     });
 
     let cloud = cloud_ref;
-    let syncing = syncing_ref;
     let local_task = thread::spawn(move || {
         let (tx, rx) = channel();
-        let mut watcher = notify::recommended_watcher(tx)?;
+        let mut watcher = recommended_watcher(tx)?;
+        let mut changes = HashSet::new();
 
         watcher.watch(&SYNC_DIR, RecursiveMode::Recursive)?;
-
-        let mut changes = HashSet::<PathBuf>::new();
 
         while let Ok(event) = rx.recv() {
             let event = match event {
@@ -66,11 +92,17 @@ fn main() -> Result<()> {
                 }
             };
 
-            if *syncing.lock().unwrap() {
+            println!("{:?}", event);
+
+            if !*IS_INTERNET_AVAILABLE.lock().unwrap() {
+                println!("Skip local syncing.. there are no internet connection");
                 continue;
             }
 
-            println!("{:?}", event);
+            if *SYNCING.lock().unwrap() {
+                println!("Ignore event since online syncing is working");
+                continue;
+            }
 
             match event.kind {
                 EventKind::Create(CreateKind::File) => {
