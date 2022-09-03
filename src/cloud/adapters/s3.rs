@@ -3,7 +3,7 @@ use crate::util::*;
 use crate::{SETTINGS, SYNC_DIR};
 use s3::serde_types::ListBucketResult;
 use s3::{creds::Credentials, Bucket, Region};
-use std::{fs, io::Write, path::PathBuf};
+use std::{collections::HashSet, fs, io::Write, path::PathBuf};
 
 fn init_bucket() -> Result<Bucket> {
     let s3_secret = SETTINGS.get_string("s3.secret")?;
@@ -39,12 +39,17 @@ impl CloudAdapter for Cloud {
 
     fn sync(&self) -> Result<u32> {
         let mut synced = 0;
+        let mut objects = HashSet::new();
 
         for list in self.bucket.list("/".to_owned(), None)? as Vec<ListBucketResult> {
             for obj in list.contents {
                 let path = key_to_path(&obj.key);
 
-                fs::create_dir_all(path.parent().unwrap())?;
+                objects.insert(path.clone());
+
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
 
                 let mut file = fs::File::options()
                     .read(true)
@@ -65,7 +70,7 @@ impl CloudAdapter for Cloud {
 
         for entry in walk_dir(SYNC_DIR.to_path_buf())? {
             let path = entry.path();
-            if !self.exists(&path)? {
+            if !objects.contains(&path) {
                 self.save(&path)?;
                 synced += 1;
             }
@@ -95,10 +100,10 @@ impl CloudAdapter for Cloud {
         Ok(())
     }
 
-    fn rename(&self, oldpath: &Path, path: &Path) -> Result<()> {
+    fn rename(&self, from: &Path, to: &Path) -> Result<()> {
         self.bucket
-            .copy_object_internal(normalize_path(oldpath), normalize_path(path))?;
-        self.delete(oldpath)?;
+            .copy_object_internal(normalize_path(from), normalize_path(to))?;
+        self.delete(from)?;
         Ok(())
     }
 
