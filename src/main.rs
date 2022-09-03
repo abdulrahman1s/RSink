@@ -7,11 +7,13 @@ mod util;
 
 use cloud::{adapters::*, CloudAdapter};
 use config::Config;
+use log::LevelFilter;
 use notify::{event::*, recommended_watcher, RecursiveMode, Watcher};
 use std::{
     collections::HashSet,
     path::PathBuf,
     process::exit,
+    str::FromStr,
     sync::{mpsc::channel, Arc, Mutex},
     thread,
     time::Duration,
@@ -36,6 +38,16 @@ lazy_static! {
 }
 
 fn main() -> Result<()> {
+    let log_level = SETTINGS
+        .get_string("main.log")
+        .unwrap_or_else(|_| "debug".to_owned())
+        .to_uppercase();
+
+    env_logger::builder()
+        .format_timestamp(None)
+        .filter_level(LevelFilter::from_str(&log_level).expect("Invalid log level format"))
+        .init();
+
     let cloud_ref = Arc::new(
         match SETTINGS
             .get_string("main.provider")
@@ -52,7 +64,7 @@ fn main() -> Result<()> {
             // "onedrive" => onedrive::Cloud::new(),
             // "protondrive" => protondrive::Cloud::new(),
             x => {
-                println!("Unspported cloud provider: {}", x);
+                log::error!("Unsupported cloud provider: {}", x);
                 exit(1);
             }
         },
@@ -62,18 +74,27 @@ fn main() -> Result<()> {
         .get("main.interval")
         .expect("Missing/Invalid interval value");
 
-    let cloud = cloud_ref.clone();
+    log::info!("Selected cloud provider: {}", cloud_ref.kind());
+    log::info!("Syncing directory: {}", SYNC_DIR.to_str().unwrap());
+    log::info!("Syncing delay: {interval:?}ms");
 
+    let cloud = cloud_ref.clone();
     let online_task = thread::spawn(move || loop {
         check_connectivity();
 
         if *IS_INTERNET_AVAILABLE.lock().unwrap() {
             *SYNCING.lock().unwrap() = true;
-            spinner("Syncing...", "Synced!", || cloud.sync().map(|_| {}));
+
+            maybe_error(
+                cloud
+                    .sync()
+                    .map(|count| log::debug!("{count:?} file has synced")),
+            );
+
             *SYNCING.lock().unwrap() = false;
             thread::sleep(Duration::from_millis(interval));
         } else {
-            println!("Skip syncing.. there are no internet connection");
+            log::warn!("Skip syncing.. there are no internet connection");
         }
     });
 
@@ -89,39 +110,33 @@ fn main() -> Result<()> {
             let event = match event {
                 Ok(e) => e,
                 Err(err) => {
-                    println!("Notify Error: {:?}", err);
+                    log::error!("Notify Error: {:?}", err);
                     continue;
                 }
             };
 
-            println!("{:?}", event);
+            log::debug!("{:?}", event);
 
             if !*IS_INTERNET_AVAILABLE.lock().unwrap() {
-                println!("Skip local syncing.. there are no internet connection");
+                log::warn!("Skip local syncing.. there are no internet connection");
                 continue;
             }
 
             if *SYNCING.lock().unwrap() {
-                println!("Ignore event since online syncing is working");
+                log::debug!("Ignore event since online syncing is working");
                 continue;
             }
 
             match event.kind {
                 EventKind::Create(CreateKind::File) => {
-                    spinner("Saveing file...", "File saved", || {
-                        cloud.save(&event.paths[0])
-                    });
+                    maybe_error(cloud.save(&event.paths[0]));
                 }
                 EventKind::Remove(RemoveKind::File | RemoveKind::Folder) => {
-                    spinner("Deleteing file...", "File deleted", || {
-                        cloud.delete(&event.paths[0])
-                    });
+                    maybe_error(cloud.delete(&event.paths[0]));
                 }
                 EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
                     if changes.remove(&event.paths[0]) {
-                        spinner("Changeing file...", "File changed", || {
-                            cloud.save(&event.paths[0])
-                        });
+                        maybe_error(cloud.save(&event.paths[0]));
                     }
                 }
                 EventKind::Modify(kind) => match kind {
@@ -130,9 +145,7 @@ fn main() -> Result<()> {
                     }
                     ModifyKind::Name(_) => {
                         if event.paths.len() == 2 {
-                            spinner("Renaming file...", "File renamed", || {
-                                cloud.rename(&event.paths[0], &event.paths[1])
-                            });
+                            maybe_error(cloud.rename(&event.paths[0], &event.paths[1]));
                         }
                     }
                     _ => {}

@@ -2,6 +2,7 @@
 provider = "s3"
 interval = 600000
 path = "/home/abdulrahman/Sync"
+log = "info"
 
 [s3]
 bucket_name = "sync"

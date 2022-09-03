@@ -11,5 +11,6 @@ dirs = "4.0.0"
 lazy_static = "1.4.0"
 notify = "5.0.0"
 rust-s3 = { version = "0.32.3", default-features = false, features = ["sync", "tags", "sync-rustls-tls"] }
-spinners = "4.1.0"
 online = { version = "3.0.1", default-features = false, features = ["sync"] }
+log = "0.4.17"
+env_logger = "0.9.0"

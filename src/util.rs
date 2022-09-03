@@ -1,6 +1,5 @@
 use crate::{IS_INTERNET_AVAILABLE, SYNC_DIR};
 pub use anyhow::Result;
-use spinners::{Spinner, Spinners};
 use std::{
     fs::{self, DirEntry},
     io,
@@ -55,22 +54,6 @@ pub fn walk_dir(dir: PathBuf) -> io::Result<Vec<DirEntry>> {
     Ok(result)
 }
 
-pub fn spinner<F>(message: &str, stop_message: &str, operation: F)
-where
-    F: Fn() -> Result<()>,
-{
-    let mut sp = Spinner::new(Spinners::Dots9, message.into());
-
-    if let Err(err) = operation() {
-        sp.stop();
-        println!("An error has occurred: {err:?}");
-    } else if stop_message.is_empty() {
-        sp.stop();
-    } else {
-        sp.stop_with_message(stop_message.into());
-    }
-}
-
 pub fn settings_file_path() -> Result<PathBuf> {
     let mut path = dirs::config_dir().unwrap();
 
@@ -98,4 +81,10 @@ pub fn settings_file_path() -> Result<PathBuf> {
 
 pub fn check_connectivity() {
     *IS_INTERNET_AVAILABLE.lock().unwrap() = online::sync::check(None).is_ok();
+}
+
+pub fn maybe_error(result: Result<()>) {
+    if let Err(error) = result {
+        log::error!("An error has occurred: {error:?}");
+    }
 }

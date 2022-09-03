@@ -101,4 +101,8 @@ impl CloudAdapter for Cloud {
         self.delete(oldpath)?;
         Ok(())
     }
+
+    fn kind(&self) -> &'static str {
+        "s3"
+    }
 }

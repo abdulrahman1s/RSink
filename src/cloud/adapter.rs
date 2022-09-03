@@ -12,4 +12,6 @@ pub trait CloudAdapter {
     fn read_file(path: &Path) -> Result<Vec<u8>> {
         Ok(std::fs::read(path)?)
     }
+
+    fn kind(&self) -> &'static str;
 }
