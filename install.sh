@@ -65,6 +65,7 @@ mkdir -p "$install_path"
 curl --fail --location --progress-bar --output "$exe.tar.gz" "$arcive_url"
 tar -xzvf "$exe.tar.gz" -C "$install_path"
 rm "$exe.tar.gz"
+chmod +x "$exe"
 
 if command -v termux-setup-storage; then
     mkdir -p ~/.termux/boot
@@ -76,13 +77,14 @@ if command -v systemctl >/dev/null; then
     mkdir -p ~/.config/systemd/user/
     systemctl --user disable rsink
     echo "[Unit]
-Description=Rsink syncls
+Description=RSink background service
 After=network.target
 
 [Service]
 Type=simple
 ExecStart=$exe
 Restart=always
+RestartSec=30
 
 [Install]
 WantedBy=multi-user.target" >~/.config/systemd/user/rsink.service
@@ -91,6 +93,6 @@ WantedBy=multi-user.target" >~/.config/systemd/user/rsink.service
     systemctl --user status rsink
 fi
 
-echo "Rsink was installed successfully to $exe"
-echo "Please edit/create $HOME/.config/rsink/config.toml to configure the settings"
-echo "An example of the configuration file at https://github.com/abdulrahman1s/RSink/blob/master/config.example.toml"
+echo "RSink was installed successfully to $exe"
+echo "Please configure the missing fields at $HOME/.config/rsink/config.toml"
+echo "An example of the configuration file located at https://github.com/abdulrahman1s/RSink/blob/master/config.example.toml"
