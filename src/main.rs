@@ -14,6 +14,7 @@ use log::LevelFilter;
 use notify::{event::*, recommended_watcher, RecursiveMode, Watcher};
 use std::{
     collections::HashSet,
+    fs,
     str::FromStr,
     sync::{mpsc::channel, Arc, Mutex},
     thread,
@@ -71,21 +72,24 @@ fn main() -> Result<()> {
             }
 
             match event.kind {
-                EventKind::Create(CreateKind::File) => {
+                EventKind::Create(_) if !fs::metadata(&event.paths[0])?.is_file() => {
                     maybe_error(cloud.save(&event.paths[0]).and_then(|_| {
                         if SYNCED_PATHS.0.insert(stringify_path(&event.paths[0])) {
                             SYNCED_PATHS.save()?;
                         }
                         Ok(())
-                    }));
+                    }))
                 }
-                EventKind::Remove(RemoveKind::File | RemoveKind::Folder) => {
-                    maybe_error(cloud.delete(&event.paths[0]).and_then(|_| {
-                        SYNCED_PATHS.0.remove(&stringify_path(&event.paths[0]));
+                EventKind::Remove(_) => maybe_error(cloud.delete(&event.paths[0]).and_then(|_| {
+                    if SYNCED_PATHS
+                        .0
+                        .remove(&stringify_path(&event.paths[0]))
+                        .is_some()
+                    {
                         SYNCED_PATHS.save()?;
-                        Ok(())
-                    }));
-                }
+                    }
+                    Ok(())
+                })),
                 EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
                     if changes.remove(&event.paths[0]) {
                         maybe_error(cloud.save(&event.paths[0]));
@@ -107,13 +111,17 @@ fn main() -> Result<()> {
                             ));
                         }
                     }
+                    #[cfg(target_os = "android")]
+                    ModifyKind::Metadata(MetadataKind::WriteTime) if event.paths[0].is_file() => {
+                        maybe_error(cloud.save(&event.paths[0]));
+                    }
                     _ => {}
                 },
                 _ => {}
             }
         }
 
-        anyhow::Result::<()>::Ok(())
+        Result::<()>::Ok(())
     });
 
     let cloud = cloud_ref;
