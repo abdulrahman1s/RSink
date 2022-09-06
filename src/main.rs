@@ -69,15 +69,22 @@ fn main() -> Result<()> {
                 continue;
             }
 
+            let is_file_exists = || {
+                fs::metadata(&event.paths[0])
+                    .map(|m| m.is_file())
+                    .unwrap_or(false)
+            };
+
             match event.kind {
-                EventKind::Create(_) if !fs::metadata(&event.paths[0])?.is_file() => {
+                EventKind::Create(_) if is_file_exists() => {
                     maybe_error(cloud.save(&event.paths[0]).and_then(|_| {
                         if SYNCED_PATHS.0.insert(stringify_path(&event.paths[0])) {
                             SYNCED_PATHS.save()?;
                         }
                         Ok(())
-                    }))
+                    }));
                 }
+
                 EventKind::Remove(_) => maybe_error(cloud.delete(&event.paths[0]).and_then(|_| {
                     if SYNCED_PATHS
                         .0
@@ -89,7 +96,7 @@ fn main() -> Result<()> {
                     Ok(())
                 })),
                 EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
-                    if changes.remove(&event.paths[0]) {
+                    if changes.remove(&event.paths[0]) && is_file_exists() {
                         maybe_error(cloud.save(&event.paths[0]));
                     }
                 }
@@ -108,7 +115,7 @@ fn main() -> Result<()> {
                         ));
                     }
                     #[cfg(target_os = "android")]
-                    ModifyKind::Metadata(MetadataKind::WriteTime) if event.paths[0].is_file() => {
+                    ModifyKind::Metadata(MetadataKind::WriteTime) if is_file_exists() => {
                         maybe_error(cloud.save(&event.paths[0]));
                     }
                     _ => {}
