@@ -1,10 +1,9 @@
-[main]
-provider = "s3"
 interval = 600000
 path = "/home/abdulrahman/Sync"
 log = "info"
 
-[s3]
+[cloud]
+provider = "s3"
 bucket_name = "sync"
 key = "access key"
 secret = "secret"
