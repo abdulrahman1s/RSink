@@ -1,16 +1,16 @@
-use crate::{IS_INTERNET_AVAILABLE, SYNC_DIR};
+use crate::config::CONFIG;
+use crate::IS_INTERNET_AVAILABLE;
 pub use anyhow::Result;
 use std::{
     fs::{self, DirEntry},
-    io,
+    io::{self, Write},
     path::{Path, PathBuf},
-    time::SystemTime,
 };
 
 pub fn normalize_path(path: &Path) -> String {
     let mut normalized_path = PathBuf::new();
     let mut found = false;
-    let root = SYNC_DIR.components().last().unwrap();
+    let root = CONFIG.path.components().last().unwrap();
 
     for part in path.components() {
         if found {
@@ -23,19 +23,7 @@ pub fn normalize_path(path: &Path) -> String {
     normalized_path.to_string_lossy().to_string()
 }
 
-#[allow(dead_code)]
-pub fn remove_timezone(s: String) -> String {
-    let mut s = s.split(':').collect::<Vec<&str>>();
-    s.remove(2);
-    s.join(":")
-}
-
-#[allow(dead_code, unused_variables)]
-pub fn compare_date(local: SystemTime, cloud: String) -> bool {
-    todo!()
-}
-
-pub fn walk_dir(dir: PathBuf) -> io::Result<Vec<DirEntry>> {
+pub fn walk_dir(dir: &Path) -> io::Result<Vec<DirEntry>> {
     let mut result = vec![];
 
     if dir.is_dir() {
@@ -44,7 +32,7 @@ pub fn walk_dir(dir: PathBuf) -> io::Result<Vec<DirEntry>> {
             let path = entry.path();
 
             if path.is_dir() {
-                result.append(&mut walk_dir(path)?);
+                result.append(&mut walk_dir(&path)?);
             } else {
                 result.push(entry);
             }
@@ -54,29 +42,15 @@ pub fn walk_dir(dir: PathBuf) -> io::Result<Vec<DirEntry>> {
     Ok(result)
 }
 
-pub fn settings_file_path() -> Result<PathBuf> {
+pub fn settings_file_path(extension: &str) -> PathBuf {
     let mut path = dirs::config_dir().unwrap();
 
     path.push("rsink");
 
-    fs::create_dir_all(&path)?;
+    fs::create_dir_all(&path).ok();
 
-    path.push("config.toml");
-
-    let file = fs::File::options()
-        .write(true)
-        .read(true)
-        .create(true)
-        .open(&path)?;
-
-    if file.metadata()?.len() == 0 {
-        return Err(anyhow::anyhow!(
-            "Please configure the settings file at {}",
-            path.to_string_lossy()
-        ));
-    }
-
-    Ok(path)
+    path.push(format!("config.{extension}"));
+    path
 }
 
 pub fn check_connectivity() {
@@ -87,4 +61,37 @@ pub fn maybe_error(result: Result<()>) {
     if let Err(error) = result {
         log::error!("An error has occurred: {error:?}");
     }
+}
+
+pub fn stringify_path(path: &Path) -> String {
+    path.to_string_lossy().to_string()
+}
+
+pub fn key_to_path(key: &str) -> PathBuf {
+    let mut path = CONFIG.path.clone();
+    path.push(key);
+    path
+}
+
+pub fn cache_file_path() -> PathBuf {
+    let mut path = dirs::cache_dir().unwrap();
+
+    path.push("rsink");
+
+    fs::create_dir_all(&path).unwrap();
+
+    path.push("cache.json");
+
+    let mut file = fs::File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(&path)
+        .unwrap();
+
+    if file.metadata().unwrap().len() == 0 {
+        file.write_all(b"[]").unwrap();
+    }
+
+    path
 }
