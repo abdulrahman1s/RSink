@@ -31,9 +31,7 @@ lazy_static! {
 fn main() -> Result<()> {
     env_logger::builder()
         .format_timestamp(None)
-        .filter_level(
-            LevelFilter::from_str(&CONFIG.log.to_uppercase()).expect("Invalid log level format"),
-        )
+        .filter_level(LevelFilter::from_str(&CONFIG.log).expect("Invalid log level format"))
         .init();
 
     let cloud_ref = Arc::new(cloud_storage(CONFIG.cloud.clone()));
@@ -99,17 +97,15 @@ fn main() -> Result<()> {
                     ModifyKind::Data(_) => {
                         changes.insert(event.paths[0].clone());
                     }
-                    ModifyKind::Name(_) => {
-                        if event.paths.len() == 2 {
-                            maybe_error(cloud.rename(&event.paths[0], &event.paths[1]).and_then(
-                                |_| {
-                                    SYNCED_PATHS.0.remove(&stringify_path(&event.paths[0]));
-                                    SYNCED_PATHS.0.insert(stringify_path(&event.paths[1]));
-                                    SYNCED_PATHS.save()?;
-                                    Ok(())
-                                },
-                            ));
-                        }
+                    ModifyKind::Name(_) if event.paths.len() == 2 => {
+                        maybe_error(cloud.rename(&event.paths[0], &event.paths[1]).and_then(
+                            |_| {
+                                SYNCED_PATHS.0.remove(&stringify_path(&event.paths[0]));
+                                SYNCED_PATHS.0.insert(stringify_path(&event.paths[1]));
+                                SYNCED_PATHS.save()?;
+                                Ok(())
+                            },
+                        ));
                     }
                     #[cfg(target_os = "android")]
                     ModifyKind::Metadata(MetadataKind::WriteTime) if event.paths[0].is_file() => {
@@ -138,11 +134,11 @@ fn main() -> Result<()> {
             );
 
             *SYNCING.lock().unwrap() = false;
-
-            thread::sleep(Duration::from_millis(CONFIG.interval));
         } else {
             log::warn!("Skip syncing.. there are no internet connection");
         }
+
+        thread::sleep(Duration::from_millis(CONFIG.interval));
     });
 
     for task in [fs_task, cloud_task] {
