@@ -17,6 +17,7 @@ serde = "1.0.144"
 figment = { version = "0.10.6", features = ["toml", "json", "env"] }
 serde_json = "1.0.85"
 dashmap = "5.4.0"
+notify-rust = "4.5.8"
 
 
 [profile.release]

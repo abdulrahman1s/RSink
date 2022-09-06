@@ -3,8 +3,9 @@ use figment::{
     providers::{Format, Json, Toml},
     Figment,
 };
+use notify_rust::Notification;
 use serde::Deserialize;
-use std::path::PathBuf;
+use std::{path::PathBuf, process};
 
 #[derive(Deserialize, Clone)]
 #[serde(tag = "provider", rename_all = "snake_case")]
@@ -43,5 +44,14 @@ lazy_static! {
         .merge(Toml::file("config.toml"))
         .merge(Json::file("config.json"))
         .extract()
-        .expect("Invalid configuration file");
+        .unwrap_or_else(|err| {
+            log::error!("Missing/Invalid configuration: {err}");
+            Notification::new()
+                .summary("RSink")
+                .body("Please configure correctly the missing settings for RSink to work")
+                .icon("dialog-error")
+                .show()
+                .ok();
+            process::exit(1);
+        });
 }
