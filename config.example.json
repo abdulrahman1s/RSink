@@ -1,0 +1,12 @@
+{
+    "interval": 600000,
+    "path": "/home/abdulrahman/Sync",
+    "log": "info",
+    "cloud": {
+        "provider": "s3",
+        "bucket_name": "sync",
+        "key": "access key",
+        "secret": "secret",
+        "endpoint": "https://example.com/endpoint"
+    }
+}
