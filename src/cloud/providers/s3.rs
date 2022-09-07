@@ -5,7 +5,8 @@ use crate::SYNCED_PATHS;
 use dashmap::DashSet;
 use s3::{creds::Credentials, Bucket, Region};
 use std::path::Path;
-use tokio::{fs, io::AsyncWriteExt};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use tokio::fs;
 
 pub struct S3Storage {
     bucket: Bucket,
@@ -50,22 +51,49 @@ impl CloudAdapter for S3Storage {
                     fs::create_dir_all(parent).await?;
                 }
 
-                let mut file = fs::OpenOptions::new()
-                    .write(true)
-                    .read(true)
-                    .create(true)
-                    .open(&path)
-                    .await?;
-                let metadata = file.metadata().await?;
+                let (size, last_modified) = fs::metadata(&path)
+                    .await
+                    .map(|m| (m.len(), m.modified().ok()))
+                    .unwrap_or((0, None));
 
                 SYNCED_PATHS.0.insert(stringify_path(&path));
 
-                if metadata.len() != obj.size
-                /* || !compare_date(metadata.modified().await?, obj.last_modified) */
-                {
-                    file.write_all(&self.get(&path).await?).await?;
-                    synced += 1;
+                if size == obj.size {
+                    continue;
                 }
+
+                log::debug!(
+                    "{:?} has different size, cloud({}) != local({})",
+                    path,
+                    obj.size,
+                    size
+                );
+
+                let prefer_local = || {
+                    if let Some(last_modified) = last_modified {
+                        let cloud_last_modified =
+                            OffsetDateTime::parse(&obj.last_modified, &Rfc3339).unwrap();
+                        let local_last_modified = OffsetDateTime::from(last_modified);
+                        log::debug!("{path:?} last modified: local({local_last_modified}) > cloud({cloud_last_modified}) = {}", local_last_modified > cloud_last_modified);
+                        return obj.size == 0 || local_last_modified > cloud_last_modified;
+                    }
+
+                    obj.size == 0
+                };
+
+                if prefer_local() {
+                    log::debug!("Preferring local {path:?} instead of cloud version");
+                    self.save(&path).await?;
+                } else {
+                    let buffer = if obj.size == 0 {
+                        vec![]
+                    } else {
+                        self.get(&path).await?
+                    };
+                    fs::write(&path, &buffer).await?;
+                }
+
+                synced += 1;
             }
         }
 
@@ -82,6 +110,7 @@ impl CloudAdapter for S3Storage {
                         unreachable!()
                     }
                 } else {
+                    log::debug!("{:?} not synced, Saving to cloud...", path);
                     self.save(&path).await?;
                     SYNCED_PATHS.0.insert(stringify_path(&path));
                     synced += 1;
@@ -95,7 +124,7 @@ impl CloudAdapter for S3Storage {
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
-        let (_, code): (_, u16) = self.bucket.head_object(normalize_path(path)).await?;
+        let (_, code) = self.bucket.head_object(normalize_path(path)).await?;
         Ok(code == 200)
     }
 
