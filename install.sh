@@ -87,7 +87,7 @@ Restart=always
 RestartSec=30
 
 [Install]
-WantedBy=multi-user.target" >~/.config/systemd/user/rsink.service
+WantedBy=default.target" >~/.config/systemd/user/rsink.service
     systemctl --user enable rsink
     systemctl --user start rsink
     systemctl --user status rsink
