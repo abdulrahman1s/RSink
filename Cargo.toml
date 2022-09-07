@@ -9,8 +9,8 @@ anyhow = "1.0.62"
 dirs = "4.0.0"
 lazy_static = "1.4.0"
 notify = "5.0.0"
-rust-s3 = { version = "0.32.3", default-features = false, features = ["sync", "tags", "sync-rustls-tls"] }
-online = { version = "3.0.1", default-features = false, features = ["sync"] }
+rust-s3 = { version = "0.32.3", default-features = false, features = ["tokio-rustls-tls", "fail-on-err"] }
+online = { git = "https://github.com/abdulrahman1s/online", branch = "tokio", default-features = false, features = ["tokio-runtime"] }
 log = "0.4.17"
 env_logger = "0.9.0"
 serde = "1.0.144"
@@ -18,7 +18,9 @@ figment = { version = "0.10.6", features = ["toml", "json", "env"] }
 serde_json = "1.0.85"
 dashmap = "5.4.0"
 notify-rust = "4.5.8"
-
+tokio = { version = "1.21.0", features = ["full"] }
+futures = "0.3.24"
+async-trait = "0.1.57"
 
 [profile.release]
 codegen-units = 1

@@ -53,14 +53,13 @@ pub fn settings_file_path(extension: &str) -> PathBuf {
     path
 }
 
-pub fn check_connectivity() {
-    *IS_INTERNET_AVAILABLE.lock().unwrap() = online::sync::check(None).is_ok();
+pub async fn check_connectivity() {
+    *IS_INTERNET_AVAILABLE.lock().unwrap() = online::check(None).await.is_ok();
 }
 
-pub fn maybe_error(result: Result<()>) {
-    if let Err(error) = result {
-        log::error!("An error has occurred: {error:?}");
-    }
+pub fn log_error(err: anyhow::Error) -> Result<()> {
+    log::error!("An error has occurred: {err:?}");
+    Ok(())
 }
 
 pub fn stringify_path(path: &Path) -> String {

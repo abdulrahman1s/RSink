@@ -10,7 +10,7 @@ pub struct Cache(pub DashSet<String>);
 
 impl Cache {
     pub fn new() -> Self {
-        let array: Vec<String> = serde_json::from_slice(&fs::read(&*PATH).unwrap()).unwrap();
+        let array: Vec<String> = serde_json::from_slice(&std::fs::read(&*PATH).unwrap()).unwrap();
         Self(DashSet::from_iter(array.into_iter()))
     }
 

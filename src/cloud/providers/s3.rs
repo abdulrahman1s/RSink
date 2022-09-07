@@ -2,16 +2,16 @@ use crate::cloud::CloudAdapter;
 use crate::config::*;
 use crate::util::*;
 use crate::SYNCED_PATHS;
-use s3::{
-    serde_types::ListBucketResult,
-    {creds::Credentials, Bucket, Region},
-};
-use std::{collections::HashSet, fs, io::Write, path::Path};
+use dashmap::DashSet;
+use s3::{creds::Credentials, Bucket, Region};
+use std::path::Path;
+use tokio::{fs, io::AsyncWriteExt};
 
 pub struct S3Storage {
     bucket: Bucket,
 }
 
+#[async_trait]
 impl CloudAdapter for S3Storage {
     fn new(options: CloudOptions) -> Self {
         let CloudOptions::S3 {
@@ -36,33 +36,34 @@ impl CloudAdapter for S3Storage {
         }
     }
 
-    fn sync(&self) -> Result<u32> {
+    async fn sync(&self) -> Result<u32> {
         let mut synced = 0;
-        let mut objects = HashSet::new();
+        let objects = DashSet::new();
 
-        for list in self.bucket.list("/".to_owned(), None)? as Vec<ListBucketResult> {
+        for list in self.bucket.list("/".to_owned(), None).await? {
             for obj in list.contents {
                 let path = key_to_path(&obj.key);
 
                 objects.insert(path.clone());
 
                 if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent)?;
+                    fs::create_dir_all(parent).await?;
                 }
 
                 let mut file = fs::OpenOptions::new()
                     .write(true)
                     .read(true)
                     .create(true)
-                    .open(&path)?;
-                let metadata = file.metadata()?;
+                    .open(&path)
+                    .await?;
+                let metadata = file.metadata().await?;
 
                 SYNCED_PATHS.0.insert(stringify_path(&path));
 
                 if metadata.len() != obj.size
-                /* || !compare_date(metadata.modified()?, obj.last_modified) */
+                /* || !compare_date(metadata.modified().await?, obj.last_modified) */
                 {
-                    file.write_all(&self.get(&path)?)?;
+                    file.write_all(&self.get(&path).await?).await?;
                     synced += 1;
                 }
             }
@@ -74,14 +75,14 @@ impl CloudAdapter for S3Storage {
             if !objects.contains(&path) {
                 if SYNCED_PATHS.0.remove(&stringify_path(&path)).is_some() {
                     if path.is_dir() {
-                        fs::remove_dir(&path)?;
+                        fs::remove_dir(&path).await?;
                     } else if path.is_file() {
-                        fs::remove_file(&path)?;
+                        fs::remove_file(&path).await?;
                     } else {
                         unreachable!()
                     }
                 } else {
-                    self.save(&path)?;
+                    self.save(&path).await?;
                     SYNCED_PATHS.0.insert(stringify_path(&path));
                     synced += 1;
                 }
@@ -93,31 +94,33 @@ impl CloudAdapter for S3Storage {
         Ok(synced)
     }
 
-    fn exists(&self, path: &Path) -> Result<bool> {
-        let (_, code): (_, u16) = self.bucket.head_object(normalize_path(path))?;
+    async fn exists(&self, path: &Path) -> Result<bool> {
+        let (_, code): (_, u16) = self.bucket.head_object(normalize_path(path)).await?;
         Ok(code == 200)
     }
 
-    fn get(&self, path: &Path) -> Result<Vec<u8>> {
-        let res = self.bucket.get_object(normalize_path(path))?;
+    async fn get(&self, path: &Path) -> Result<Vec<u8>> {
+        let res = self.bucket.get_object(normalize_path(path)).await?;
         Ok(res.bytes().into())
     }
 
-    fn delete(&self, path: &Path) -> Result<()> {
-        self.bucket.delete_object(normalize_path(path))?;
+    async fn delete(&self, path: &Path) -> Result<()> {
+        self.bucket.delete_object(normalize_path(path)).await?;
         Ok(())
     }
 
-    fn save(&self, path: &Path) -> Result<()> {
+    async fn save(&self, path: &Path) -> Result<()> {
         self.bucket
-            .put_object(normalize_path(path), &Self::read_file(path)?)?;
+            .put_object(normalize_path(path), &Self::read_file(path).await?)
+            .await?;
         Ok(())
     }
 
-    fn rename(&self, from: &Path, to: &Path) -> Result<()> {
+    async fn rename(&self, from: &Path, to: &Path) -> Result<()> {
         self.bucket
-            .copy_object_internal(normalize_path(from), normalize_path(to))?;
-        self.delete(from)?;
+            .copy_object_internal(normalize_path(from), normalize_path(to))
+            .await?;
+        self.delete(from).await?;
         Ok(())
     }
 

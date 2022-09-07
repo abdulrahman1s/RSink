@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate async_trait;
 extern crate notify;
 
 mod cache;
@@ -10,16 +12,15 @@ mod util;
 use cache::*;
 use cloud::{cloud_storage, CloudAdapter};
 use config::*;
+use dashmap::DashSet;
 use log::LevelFilter;
 use notify::{event::*, recommended_watcher, RecursiveMode, Watcher};
 use std::{
-    collections::HashSet,
-    fs,
     str::FromStr,
-    sync::{mpsc::channel, Arc, Mutex},
-    thread,
+    sync::{Arc, Mutex},
     time::Duration,
 };
+use tokio::{fs, spawn, sync::mpsc::channel, time::sleep};
 use util::*;
 
 lazy_static! {
@@ -28,7 +29,8 @@ lazy_static! {
     pub static ref SYNCED_PATHS: Cache = Cache::new();
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     env_logger::builder()
         .format_timestamp(None)
         .filter_level(LevelFilter::from_str(&CONFIG.log).expect("Invalid log level format"))
@@ -41,14 +43,16 @@ fn main() -> Result<()> {
     log::info!("Syncing delay: {}ms", CONFIG.interval);
 
     let cloud = cloud_ref.clone();
-    let fs_task = thread::spawn(move || {
-        let (tx, rx) = channel();
-        let mut watcher = recommended_watcher(tx)?;
-        let mut changes = HashSet::new();
+    let fs_task = spawn(async move {
+        let (tx, mut rx) = channel(5);
+        let mut watcher = recommended_watcher(move |event| {
+            futures::executor::block_on(async { tx.send(event).await.unwrap() });
+        })?;
+        let changes = Arc::new(DashSet::new());
 
         watcher.watch(&CONFIG.path, RecursiveMode::Recursive)?;
 
-        while let Ok(event) = rx.recv() {
+        while let Some(event) = rx.recv().await {
             let event = match event {
                 Ok(e) => e,
                 Err(err) => {
@@ -69,88 +73,112 @@ fn main() -> Result<()> {
                 continue;
             }
 
-            let is_file_exists = || {
-                fs::metadata(&event.paths[0])
-                    .map(|m| m.is_file())
-                    .unwrap_or(false)
-            };
+            let cloud = cloud.clone();
+            let changes = changes.clone();
 
-            match event.kind {
-                EventKind::Create(_) if is_file_exists() => {
-                    maybe_error(cloud.save(&event.paths[0]).and_then(|_| {
-                        if SYNCED_PATHS.0.insert(stringify_path(&event.paths[0])) {
-                            SYNCED_PATHS.save()?;
-                        }
-                        Ok(())
-                    }));
-                }
+            spawn(async move {
+                let is_file_exists = || async {
+                    fs::metadata(&event.paths[0])
+                        .await
+                        .map(|m| m.is_file())
+                        .unwrap_or(false)
+                };
 
-                EventKind::Remove(_) => maybe_error(cloud.delete(&event.paths[0]).and_then(|_| {
-                    if SYNCED_PATHS
-                        .0
-                        .remove(&stringify_path(&event.paths[0]))
-                        .is_some()
-                    {
-                        SYNCED_PATHS.save()?;
-                    }
-                    Ok(())
-                })),
-                EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
-                    if changes.remove(&event.paths[0]) && is_file_exists() {
-                        maybe_error(cloud.save(&event.paths[0]));
-                    }
-                }
-                EventKind::Modify(kind) => match kind {
-                    ModifyKind::Data(_) => {
-                        changes.insert(event.paths[0].clone());
-                    }
-                    ModifyKind::Name(_) if event.paths.len() == 2 => {
-                        maybe_error(cloud.rename(&event.paths[0], &event.paths[1]).and_then(
-                            |_| {
-                                SYNCED_PATHS.0.remove(&stringify_path(&event.paths[0]));
-                                SYNCED_PATHS.0.insert(stringify_path(&event.paths[1]));
-                                SYNCED_PATHS.save()?;
+                match event.kind {
+                    EventKind::Create(_) if is_file_exists().await => {
+                        cloud
+                            .save(&event.paths[0])
+                            .await
+                            .and_then(|_| {
+                                if SYNCED_PATHS.0.insert(stringify_path(&event.paths[0])) {
+                                    SYNCED_PATHS.save()?;
+                                }
                                 Ok(())
-                            },
-                        ));
+                            })
+                            .or_else(log_error)?;
                     }
-                    #[cfg(target_os = "android")]
-                    ModifyKind::Metadata(MetadataKind::WriteTime) if is_file_exists() => {
-                        maybe_error(cloud.save(&event.paths[0]));
+
+                    EventKind::Remove(_) => {
+                        cloud
+                            .delete(&event.paths[0])
+                            .await
+                            .and_then(|_| {
+                                if SYNCED_PATHS
+                                    .0
+                                    .remove(&stringify_path(&event.paths[0]))
+                                    .is_some()
+                                {
+                                    SYNCED_PATHS.save()?;
+                                }
+                                Ok(())
+                            })
+                            .or_else(log_error)?;
                     }
+                    EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
+                        if changes.remove(&event.paths[0]).is_some() && is_file_exists().await {
+                            cloud.save(&event.paths[0]).await.or_else(log_error)?;
+                        }
+                    }
+                    EventKind::Modify(kind) => match kind {
+                        ModifyKind::Data(_) => {
+                            changes.insert(event.paths[0].clone());
+                        }
+                        ModifyKind::Name(_) if event.paths.len() == 2 => {
+                            cloud
+                                .rename(&event.paths[0], &event.paths[1])
+                                .await
+                                .and_then(|_| {
+                                    SYNCED_PATHS.0.remove(&stringify_path(&event.paths[0]));
+                                    SYNCED_PATHS.0.insert(stringify_path(&event.paths[1]));
+                                    SYNCED_PATHS.save()?;
+                                    Ok(())
+                                })
+                                .or_else(log_error)?;
+                        }
+                        #[cfg(target_os = "android")]
+                        ModifyKind::Metadata(MetadataKind::WriteTime) if is_file_exists().await => {
+                            cloud.save(&event.paths[0]).await.or_else(log_error)?;
+                        }
+                        _ => {}
+                    },
                     _ => {}
-                },
-                _ => {}
-            }
+                }
+
+                Result::<()>::Ok(())
+            });
         }
 
         Result::<()>::Ok(())
     });
 
     let cloud = cloud_ref;
-    let cloud_task = thread::spawn(move || loop {
-        check_connectivity();
+    let cloud_task = spawn(async move {
+        loop {
+            check_connectivity().await;
 
-        if *IS_INTERNET_AVAILABLE.lock().unwrap() {
-            *SYNCING.lock().unwrap() = true;
+            if *IS_INTERNET_AVAILABLE.lock().unwrap() {
+                *SYNCING.lock().unwrap() = true;
 
-            maybe_error(
                 cloud
                     .sync()
-                    .map(|count| log::debug!("{count:?} file has synced")),
-            );
+                    .await
+                    .map(|count| log::debug!("{count:?} file has synced"))
+                    .or_else(log_error)?;
 
-            *SYNCING.lock().unwrap() = false;
-        } else {
-            log::warn!("Skip syncing.. there are no internet connection");
+                *SYNCING.lock().unwrap() = false;
+            } else {
+                log::warn!("Skip syncing.. there are no internet connection");
+            }
+
+            sleep(Duration::from_millis(CONFIG.interval)).await;
         }
 
-        thread::sleep(Duration::from_millis(CONFIG.interval));
+        #[allow(unreachable_code)]
+        Result::<()>::Ok(())
     });
 
-    for task in [fs_task, cloud_task] {
-        task.join().unwrap()?;
+    match tokio::try_join!(fs_task, cloud_task) {
+        Err(err) => panic!("An unexpected error occurred: {err:?}"),
+        _ => unreachable!(),
     }
-
-    Ok(())
 }
