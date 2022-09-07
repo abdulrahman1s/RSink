@@ -10,7 +10,7 @@ mod config;
 mod util;
 
 use cache::*;
-use cloud::{cloud_storage, CloudAdapter};
+use cloud::{select_provider, CloudAdapter, Operation};
 use config::*;
 use dashmap::DashSet;
 use log::LevelFilter;
@@ -36,7 +36,7 @@ async fn main() -> Result<()> {
         .filter_level(LevelFilter::from_str(&CONFIG.log).expect("Invalid log level format"))
         .init();
 
-    let cloud_ref = Arc::new(cloud_storage(CONFIG.cloud.clone()));
+    let cloud_ref = Arc::new(select_provider(CONFIG.cloud.clone()).await);
 
     log::info!("Selected cloud provider: {}", cloud_ref.kind());
     log::info!("Syncing directory: {:?}", CONFIG.path);
@@ -77,16 +77,17 @@ async fn main() -> Result<()> {
             let cloud = cloud.clone();
             let changes = changes.clone();
             let task = spawn(async move {
+                let path = &event.paths[0];
                 let is_file_exists = || async {
-                    log::debug!("Checking {:?} metadata", event.paths[0]);
+                    log::debug!("Checking {:?} metadata", path);
 
                     let debug_statement = |x| {
-                        log::debug!("Is {:?} valid file path: {}", event.paths[0], x);
+                        log::debug!("Is {:?} valid file path: {}", path, x);
                         x
                     };
 
                     debug_statement(
-                        fs::metadata(&event.paths[0])
+                        fs::metadata(path)
                             .await
                             .map(|m| m.is_file())
                             .unwrap_or(false),
@@ -95,13 +96,13 @@ async fn main() -> Result<()> {
 
                 match event.kind {
                     EventKind::Create(_) if is_file_exists().await => {
-                        log::debug!("Saving {:?}", event.paths[0]);
+                        log::debug!("Saving {:?}", path);
 
                         cloud
-                            .save(&event.paths[0])
+                            .save(path, &fs::read(path).await?)
                             .await
                             .and_then(|_| {
-                                if SYNCED_PATHS.0.insert(stringify_path(&event.paths[0])) {
+                                if SYNCED_PATHS.0.insert(stringify_path(path)) {
                                     SYNCED_PATHS.save()?;
                                 }
                                 Ok(())
@@ -109,17 +110,13 @@ async fn main() -> Result<()> {
                             .or_else(log_error)?;
                     }
                     EventKind::Remove(_) => {
-                        log::debug!("Deleting {:?}", event.paths[0]);
+                        log::debug!("Deleting {:?}", path);
 
                         cloud
-                            .delete(&event.paths[0])
+                            .delete(path)
                             .await
                             .and_then(|_| {
-                                if SYNCED_PATHS
-                                    .0
-                                    .remove(&stringify_path(&event.paths[0]))
-                                    .is_some()
-                                {
+                                if SYNCED_PATHS.0.remove(&stringify_path(path)).is_some() {
                                     SYNCED_PATHS.save()?;
                                 }
                                 Ok(())
@@ -127,27 +124,26 @@ async fn main() -> Result<()> {
                             .or_else(log_error)?;
                     }
                     EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
-                        if changes.remove(&event.paths[0]).is_some() && is_file_exists().await {
-                            log::debug!("Updating {:?}", event.paths[0]);
-                            cloud.save(&event.paths[0]).await.or_else(log_error)?;
+                        if changes.remove(path).is_some() && is_file_exists().await {
+                            log::debug!("Updating {:?}", path);
+                            cloud
+                                .save(path, &fs::read(path).await?)
+                                .await
+                                .or_else(log_error)?;
                         }
                     }
                     EventKind::Modify(kind) => match kind {
                         ModifyKind::Data(_) => {
-                            if SYNCED_PATHS.0.contains(&stringify_path(&event.paths[0])) {
-                                changes.insert(event.paths[0].clone());
+                            if SYNCED_PATHS.0.contains(&stringify_path(path)) {
+                                changes.insert(path.clone());
                             }
                         }
                         ModifyKind::Name(_) if event.paths.len() == 2 => {
-                            log::debug!("Moving from {:?} to {:?}", event.paths[0], event.paths[1]);
+                            log::debug!("Moving from {:?} to {:?}", path, event.paths[1]);
 
-                            if SYNCED_PATHS
-                                .0
-                                .remove(&stringify_path(&event.paths[0]))
-                                .is_none()
-                            {
+                            if SYNCED_PATHS.0.remove(&stringify_path(path)).is_none() {
                                 cloud
-                                    .save(&event.paths[1])
+                                    .save(&event.paths[1], &fs::read(&event.paths[1]).await?)
                                     .await
                                     .and_then(|_| {
                                         SYNCED_PATHS.0.insert(stringify_path(&event.paths[1]));
@@ -156,10 +152,10 @@ async fn main() -> Result<()> {
                                     .or_else(log_error)?;
                             } else {
                                 cloud
-                                    .rename(&event.paths[0], &event.paths[1])
+                                    .rename(path, &event.paths[1])
                                     .await
                                     .and_then(|_| {
-                                        SYNCED_PATHS.0.remove(&stringify_path(&event.paths[0]));
+                                        SYNCED_PATHS.0.remove(&stringify_path(path));
                                         SYNCED_PATHS.0.insert(stringify_path(&event.paths[1]));
                                         SYNCED_PATHS.save()
                                     })
@@ -168,8 +164,11 @@ async fn main() -> Result<()> {
                         }
                         #[cfg(target_os = "android")]
                         ModifyKind::Metadata(MetadataKind::WriteTime) if is_file_exists().await => {
-                            log::debug!("Saving {:?}", event.paths[0]);
-                            cloud.save(&event.paths[0]).await.or_else(log_error)?;
+                            log::debug!("Saving {:?}", path);
+                            cloud
+                                .save(path, &fs::read(path).await?)
+                                .await
+                                .or_else(log_error)?;
                         }
                         _ => {}
                     },
@@ -201,12 +200,56 @@ async fn main() -> Result<()> {
             if *IS_INTERNET_AVAILABLE.lock().unwrap() {
                 *SYNCING.lock().unwrap() = true;
 
-                cloud
-                    .sync()
-                    .await
-                    .map(|count| log::debug!("{count:?} file has synced"))
-                    .or_else(log_error)?;
+                let (objects, operations) = cloud.sync().await?;
+                let mut synced = 0;
 
+                log::debug!("Sync operations: {}", operations.len());
+
+                for op in operations {
+                    match op {
+                        Operation::Save(path) => {
+                            log::debug!("Saving {path:?}");
+                            cloud.save(&path, &fs::read(&path).await?).await?;
+                            synced += 1;
+                        }
+                        Operation::Write(path) => {
+                            let buffer = cloud.get(&path).await?;
+                            log::debug!("Writing {} bytes to {path:?}", buffer.len());
+                            fs::write(&path, &buffer).await?;
+                            synced += 1;
+                        }
+                        Operation::WriteEmpty(path) => {
+                            log::debug!("Writing empty buffer to {path:?}");
+                            fs::write(&path, &[]).await?;
+                            synced += 1;
+                        }
+                    }
+                }
+
+                for entry in walk_dir(&CONFIG.path)? {
+                    let path = entry.path();
+
+                    if !objects.contains(&path) {
+                        if SYNCED_PATHS.0.remove(&stringify_path(&path)).is_some() {
+                            if path.is_dir() {
+                                fs::remove_dir(&path).await?;
+                            } else if path.is_file() {
+                                fs::remove_file(&path).await?;
+                            } else {
+                                unreachable!()
+                            }
+                        } else {
+                            log::debug!("{:?} not synced, Saving to cloud...", path);
+                            cloud.save(&path, &fs::read(&path).await?).await?;
+                            SYNCED_PATHS.0.insert(stringify_path(&path));
+                            synced += 1;
+                        }
+                    }
+                }
+
+                log::debug!("{synced:?} file has synced");
+
+                SYNCED_PATHS.save()?;
                 *SYNCING.lock().unwrap() = false;
             } else {
                 log::warn!("Skip syncing.. there are no internet connection");

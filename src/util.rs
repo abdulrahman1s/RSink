@@ -6,6 +6,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
 };
+use time::OffsetDateTime;
 
 pub fn normalize_path(path: &Path) -> String {
     let mut normalized_path = PathBuf::new();
@@ -93,4 +94,15 @@ pub fn cache_file_path() -> PathBuf {
     }
 
     path
+}
+
+pub async fn metadata_of(path: &Path) -> (bool, u64, Option<OffsetDateTime>) {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await.ok();
+    }
+
+    tokio::fs::metadata(path)
+        .await
+        .map(|m| (true, m.len(), m.modified().map(|x| x.into()).ok()))
+        .unwrap_or((false, 0, None))
 }

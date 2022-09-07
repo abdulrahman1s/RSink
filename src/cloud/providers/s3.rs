@@ -1,12 +1,15 @@
 use crate::cloud::CloudAdapter;
+use crate::cloud::Operation;
 use crate::config::*;
 use crate::util::*;
 use crate::SYNCED_PATHS;
 use dashmap::DashSet;
 use s3::{creds::Credentials, Bucket, Region};
 use std::path::Path;
+use std::path::PathBuf;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
-use tokio::fs;
+
+const TRASH_PATH: &str = ".trash/";
 
 pub struct S3Storage {
     bucket: Bucket,
@@ -14,7 +17,7 @@ pub struct S3Storage {
 
 #[async_trait]
 impl CloudAdapter for S3Storage {
-    fn new(options: CloudOptions) -> Self {
+    async fn init(options: CloudOptions) -> Self {
         let CloudOptions::S3 {
             key,
             secret,
@@ -37,28 +40,28 @@ impl CloudAdapter for S3Storage {
         }
     }
 
-    async fn sync(&self) -> Result<u32> {
-        let mut synced = 0;
+    async fn sync(&self) -> Result<(DashSet<PathBuf>, Vec<Operation>)> {
         let objects = DashSet::new();
+        let mut operations = vec![];
 
         for list in self.bucket.list("/".to_owned(), None).await? {
             for obj in list.contents {
+                if obj.key.starts_with(TRASH_PATH) {
+                    continue;
+                }
+
                 let path = key_to_path(&obj.key);
 
                 objects.insert(path.clone());
 
-                if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent).await?;
-                }
-
-                let (size, last_modified) = fs::metadata(&path)
-                    .await
-                    .map(|m| (m.len(), m.modified().ok()))
-                    .unwrap_or((0, None));
+                let (exists, size, last_modified) = metadata_of(&path).await;
 
                 SYNCED_PATHS.0.insert(stringify_path(&path));
 
                 if size == obj.size {
+                    if obj.size == 0 && !exists {
+                        operations.push(Operation::WriteEmpty(path));
+                    }
                     continue;
                 }
 
@@ -73,7 +76,7 @@ impl CloudAdapter for S3Storage {
                     if let Some(last_modified) = last_modified {
                         let cloud_last_modified =
                             OffsetDateTime::parse(&obj.last_modified, &Rfc3339).unwrap();
-                        let local_last_modified = OffsetDateTime::from(last_modified);
+                        let local_last_modified = last_modified;
                         log::debug!("{path:?} last modified: local({local_last_modified}) > cloud({cloud_last_modified}) = {}", local_last_modified > cloud_last_modified);
                         return obj.size == 0 || local_last_modified > cloud_last_modified;
                     }
@@ -83,44 +86,14 @@ impl CloudAdapter for S3Storage {
 
                 if prefer_local() {
                     log::debug!("Preferring local {path:?} instead of cloud version");
-                    self.save(&path).await?;
+                    operations.push(Operation::Save(path));
                 } else {
-                    let buffer = if obj.size == 0 {
-                        vec![]
-                    } else {
-                        self.get(&path).await?
-                    };
-                    fs::write(&path, &buffer).await?;
-                }
-
-                synced += 1;
-            }
-        }
-
-        for entry in walk_dir(&CONFIG.path)? {
-            let path = entry.path();
-
-            if !objects.contains(&path) {
-                if SYNCED_PATHS.0.remove(&stringify_path(&path)).is_some() {
-                    if path.is_dir() {
-                        fs::remove_dir(&path).await?;
-                    } else if path.is_file() {
-                        fs::remove_file(&path).await?;
-                    } else {
-                        unreachable!()
-                    }
-                } else {
-                    log::debug!("{:?} not synced, Saving to cloud...", path);
-                    self.save(&path).await?;
-                    SYNCED_PATHS.0.insert(stringify_path(&path));
-                    synced += 1;
+                    operations.push(Operation::Write(path));
                 }
             }
         }
 
-        SYNCED_PATHS.save()?;
-
-        Ok(synced)
+        Ok((objects, operations))
     }
 
     async fn exists(&self, path: &Path) -> Result<bool> {
@@ -134,13 +107,19 @@ impl CloudAdapter for S3Storage {
     }
 
     async fn delete(&self, path: &Path) -> Result<()> {
+        self.bucket
+            .copy_object_internal(
+                normalize_path(path),
+                TRASH_PATH.to_owned() + &normalize_path(path),
+            )
+            .await?;
         self.bucket.delete_object(normalize_path(path)).await?;
         Ok(())
     }
 
-    async fn save(&self, path: &Path) -> Result<()> {
+    async fn save(&self, path: &Path, content: &[u8]) -> Result<()> {
         self.bucket
-            .put_object(normalize_path(path), &Self::read_file(path).await?)
+            .put_object(normalize_path(path), content)
             .await?;
         Ok(())
     }

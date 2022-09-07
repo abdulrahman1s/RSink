@@ -9,7 +9,7 @@ anyhow = "1.0.62"
 dirs = "4.0.0"
 lazy_static = "1.4.0"
 notify = "5.0.0"
-rust-s3 = { version = "0.32.3", default-features = false, features = ["tokio-rustls-tls", "fail-on-err"] }
+rust-s3 = { version = "0.32.3", default-features = false, features = ["tokio-rustls-tls"] }
 online = { git = "https://github.com/abdulrahman1s/online", branch = "tokio", default-features = false, features = ["tokio-runtime"] }
 log = "0.4.17"
 env_logger = "0.9.0"

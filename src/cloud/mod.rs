@@ -5,9 +5,9 @@ use crate::config::CloudOptions;
 pub use adapter::*;
 use providers::*;
 
-pub fn cloud_storage(options: CloudOptions) -> impl CloudAdapter {
+pub async fn select_provider(options: CloudOptions) -> impl CloudAdapter {
     match options {
-        CloudOptions::S3 { .. } => S3Storage::new(options),
+        CloudOptions::S3 { .. } => S3Storage::init(options).await,
         // TODO: Support more providers
         // CloudOptions::GoogleDrive { .. } => GoogleDrive:new(options),
         // CloudOptions::Dropbox { .. } => Dropbox::new(options),
