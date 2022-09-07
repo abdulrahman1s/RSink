@@ -44,11 +44,12 @@ async fn main() -> Result<()> {
 
     let cloud = cloud_ref.clone();
     let fs_task = spawn(async move {
-        let (tx, mut rx) = channel(5);
+        let (tx, mut rx) = channel(100);
         let mut watcher = recommended_watcher(move |event| {
             futures::executor::block_on(async { tx.send(event).await.unwrap() });
         })?;
         let changes = Arc::new(DashSet::new());
+        let mut tasks = vec![];
 
         watcher.watch(&CONFIG.path, RecursiveMode::Recursive)?;
 
@@ -75,17 +76,27 @@ async fn main() -> Result<()> {
 
             let cloud = cloud.clone();
             let changes = changes.clone();
-
-            spawn(async move {
+            let task = spawn(async move {
                 let is_file_exists = || async {
-                    fs::metadata(&event.paths[0])
-                        .await
-                        .map(|m| m.is_file())
-                        .unwrap_or(false)
+                    log::debug!("Checking {:?} metadata", event.paths[0]);
+
+                    let debug_statement = |x| {
+                        log::debug!("Is {:?} valid file path: {}", event.paths[0], x);
+                        x
+                    };
+
+                    debug_statement(
+                        fs::metadata(&event.paths[0])
+                            .await
+                            .map(|m| m.is_file())
+                            .unwrap_or(false),
+                    )
                 };
 
                 match event.kind {
                     EventKind::Create(_) if is_file_exists().await => {
+                        log::debug!("Saving {:?}", event.paths[0]);
+
                         cloud
                             .save(&event.paths[0])
                             .await
@@ -97,8 +108,9 @@ async fn main() -> Result<()> {
                             })
                             .or_else(log_error)?;
                     }
-
                     EventKind::Remove(_) => {
+                        log::debug!("Deleting {:?}", event.paths[0]);
+
                         cloud
                             .delete(&event.paths[0])
                             .await
@@ -116,27 +128,47 @@ async fn main() -> Result<()> {
                     }
                     EventKind::Access(AccessKind::Close(AccessMode::Write)) => {
                         if changes.remove(&event.paths[0]).is_some() && is_file_exists().await {
+                            log::debug!("Updating {:?}", event.paths[0]);
                             cloud.save(&event.paths[0]).await.or_else(log_error)?;
                         }
                     }
                     EventKind::Modify(kind) => match kind {
                         ModifyKind::Data(_) => {
-                            changes.insert(event.paths[0].clone());
+                            if SYNCED_PATHS.0.contains(&stringify_path(&event.paths[0])) {
+                                changes.insert(event.paths[0].clone());
+                            }
                         }
                         ModifyKind::Name(_) if event.paths.len() == 2 => {
-                            cloud
-                                .rename(&event.paths[0], &event.paths[1])
-                                .await
-                                .and_then(|_| {
-                                    SYNCED_PATHS.0.remove(&stringify_path(&event.paths[0]));
-                                    SYNCED_PATHS.0.insert(stringify_path(&event.paths[1]));
-                                    SYNCED_PATHS.save()?;
-                                    Ok(())
-                                })
-                                .or_else(log_error)?;
+                            log::debug!("Moving from {:?} to {:?}", event.paths[0], event.paths[1]);
+
+                            if SYNCED_PATHS
+                                .0
+                                .remove(&stringify_path(&event.paths[0]))
+                                .is_none()
+                            {
+                                cloud
+                                    .save(&event.paths[1])
+                                    .await
+                                    .and_then(|_| {
+                                        SYNCED_PATHS.0.insert(stringify_path(&event.paths[1]));
+                                        SYNCED_PATHS.save()
+                                    })
+                                    .or_else(log_error)?;
+                            } else {
+                                cloud
+                                    .rename(&event.paths[0], &event.paths[1])
+                                    .await
+                                    .and_then(|_| {
+                                        SYNCED_PATHS.0.remove(&stringify_path(&event.paths[0]));
+                                        SYNCED_PATHS.0.insert(stringify_path(&event.paths[1]));
+                                        SYNCED_PATHS.save()
+                                    })
+                                    .or_else(log_error)?;
+                            }
                         }
                         #[cfg(target_os = "android")]
                         ModifyKind::Metadata(MetadataKind::WriteTime) if is_file_exists().await => {
+                            log::debug!("Saving {:?}", event.paths[0]);
                             cloud.save(&event.paths[0]).await.or_else(log_error)?;
                         }
                         _ => {}
@@ -146,6 +178,16 @@ async fn main() -> Result<()> {
 
                 Result::<()>::Ok(())
             });
+
+            tasks.push(task);
+
+            if tasks.len() == 5 {
+                // The maximum running tasks is 5
+                log::debug!("Flushing {} tasks", tasks.len());
+                while let Some(task) = tasks.pop() {
+                    task.await??;
+                }
+            }
         }
 
         Result::<()>::Ok(())
