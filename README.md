@@ -3,7 +3,7 @@ Simple utility to backup/sync data between devices to the cloud
 
 ### Features
 - 🚀 Blazingly Fast
-- ⛽ Lightweight (600K~ of memory)
+- ⛽ Lightweight
 - 🛟 Cross-platform, runs everywhere
 - 📁 Support multiple cloud providers
 
