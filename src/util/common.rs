@@ -3,7 +3,6 @@ use crate::IS_INTERNET_AVAILABLE;
 pub use anyhow::Result;
 use std::{
     fs::{self, DirEntry},
-    io::{self, Write},
     path::{Path, PathBuf},
 };
 use time::OffsetDateTime;
@@ -24,7 +23,7 @@ pub fn normalize_path(path: &Path) -> String {
     normalized_path.to_string_lossy().to_string()
 }
 
-pub fn walk_dir(dir: &Path) -> io::Result<Vec<DirEntry>> {
+pub fn walk_dir(dir: &Path) -> Result<Vec<DirEntry>> {
     let mut result = vec![];
 
     if dir.is_dir() {
@@ -43,14 +42,15 @@ pub fn walk_dir(dir: &Path) -> io::Result<Vec<DirEntry>> {
     Ok(result)
 }
 
-pub fn settings_file_path(extension: &str) -> PathBuf {
+pub fn settings_file_path() -> PathBuf {
     let mut path = dirs::config_dir().unwrap();
 
     path.push("rsink");
 
     fs::create_dir_all(&path).ok();
 
-    path.push(format!("config.{extension}"));
+    path.push("rsink.conf");
+
     path
 }
 
@@ -63,36 +63,9 @@ pub fn log_error(err: anyhow::Error) -> Result<()> {
     Ok(())
 }
 
-pub fn stringify_path(path: &Path) -> String {
-    path.to_string_lossy().to_string()
-}
-
 pub fn key_to_path(key: &str) -> PathBuf {
     let mut path = CONFIG.path.clone();
     path.push(key);
-    path
-}
-
-pub fn cache_file_path() -> PathBuf {
-    let mut path = dirs::cache_dir().unwrap();
-
-    path.push("rsink");
-
-    fs::create_dir_all(&path).unwrap();
-
-    path.push("cache.json");
-
-    let mut file = fs::File::options()
-        .read(true)
-        .write(true)
-        .create(true)
-        .open(&path)
-        .unwrap();
-
-    if file.metadata().unwrap().len() == 0 {
-        file.write_all(b"[]").unwrap();
-    }
-
     path
 }
 
