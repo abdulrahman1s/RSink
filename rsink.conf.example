@@ -2,9 +2,9 @@ interval = 600000
 path = "/home/abdulrahman/Sync"
 log = "info"
 
-[cloud]
+[backend]
 provider = "s3"
 bucket_name = "sync"
-key = "access key"
-secret = "secret"
+access_key_id = "access key"
+secret_access_key = "secret"
 endpoint = "https://example.com/endpoint"

@@ -1,4 +1,4 @@
 /target
 /sync
-/config.*
-!config.example.*
+/rsink.conf
+.env
